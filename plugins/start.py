@@ -5,7 +5,7 @@ from pyrogram.types import (
     InlineKeyboardButton, InlineKeyboardMarkup, 
     Message, CallbackQuery
 )
-from pyrogram.errors import UserNotParticipant, ChatAdminRequired
+from pyrogram.errors import UserNotParticipant, ChatAdminRequired, MessageNotModified
 from config import Config
 from database import add_user, get_user, is_premium_user
 
@@ -34,6 +34,75 @@ def get_force_sub_keyboard():
     buttons.append([InlineKeyboardButton("🔄 Refresh / Try Again", callback_data="check_sub")])
     return InlineKeyboardMarkup(buttons)
 
+# --- Text Builders (shared by command handlers & callback editors) ---
+def get_welcome_text(first_name: str) -> str:
+    return (
+        f"<b>ʜᴇʏ, {first_name}! 👋</b>\n\n"
+        f"ɪ'ᴍ ᴀɴ <b>ʜᴀʀᴅsᴜʙ ᴍᴇʀɢᴇ ʙᴏᴛ</b> 🎬\n"
+        f"ɪ ᴄᴀɴ ᴍᴇʀɢᴇ ʜᴀʀᴅ sᴜʙᴛɪᴛʟᴇs ɪɴᴛᴏ ᴠɪᴅᴇᴏs ᴏғ ᴀɴʏ ʟᴀɴɢᴜᴀɢᴇ 🌍\n\n"
+        f"📤 Sᴇɴᴅ ᴍᴇ ᴀ ᴠɪᴅᴇᴏ + sᴜʙᴛɪᴛʟᴇ ғɪʟᴇ\n"
+        f"⚡ I'ʟʟ ᴍᴇʀɢᴇ ᴛʜᴇᴍ ᴘᴇʀғᴇᴄᴛʟʏ!\n"
+        f"🚀 Uᴘ ᴛᴏ 4GB ғᴏʀ ᴘʀᴇᴍɪᴜᴍ ᴜsᴇʀs\n\n"
+        f"👨‍💻 Dᴇᴠᴇʟᴏᴘᴇʀ: @Venuboyy"
+    )
+
+def get_welcome_buttons() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("🏠 Home", callback_data="cb_home"),
+            InlineKeyboardButton("❓ Help", callback_data="cb_help"),
+        ],
+        [
+            InlineKeyboardButton("ℹ️ About", callback_data="cb_about"),
+            InlineKeyboardButton("💎 Premium", callback_data="cb_premium"),
+        ]
+    ])
+
+def get_help_text() -> str:
+    return (
+        "<b>✨ Hᴏᴡ Tᴏ Usᴇ HᴀʀᴅSᴜʙ Mᴇʀɢᴇ Bᴏᴛ ✨</b>\n\n"
+        "1️⃣ <b>Sᴇɴᴅ Vɪᴅᴇᴏ:</b> Send the video file you want to merge 🎬\n"
+        "2️⃣ <b>Sᴇɴᴅ Sᴜʙᴛɪᴛʟᴇ:</b> Send the subtitle file (.srt, .ass, etc.) 📝\n"
+        "3️⃣ <b>Mᴇʀɢᴇ:</b> Bot will automatically detect & merge them ⚡\n"
+        "4️⃣ <b>Dᴏᴡɴʟᴏᴀᴅ:</b> Get your hardsubbed video! 📥\n\n"
+        "📌 <b>Features:</b>\n"
+        "➤ Supports all languages 🌐\n"
+        "➤ Free: Up to 2GB | Premium: Up to 4GB 💎\n"
+        "➤ Ultra-fast high-speed processing ⚡"
+    )
+
+def get_about_text() -> str:
+    return (
+        "<b>╭────[ Mʏ Dᴇᴛᴀɪʟs ]────⍟\n"
+        "├⍟ Nᴀᴍᴇ : HᴀʀᴅSᴜʙ Mᴇʀɢᴇ Bᴏᴛ\n"
+        "├⍟ Dᴇᴠᴇʟᴏᴘᴇʀ : <a href='https://t.me/Venuboyy'>Vᴇɴᴜʙᴏʏʏ</a> 👨‍💻\n"
+        "├⍟ Lɪʙʀᴀʀʏ : <a href='https://github.com/pyrogram/pyrogram'>Pʏʀᴏɢʀᴀᴍ</a> 📚\n"
+        "├⍟ Lᴀɴɢᴜᴀɢᴇ : <a href='https://www.python.org/'>Pʏᴛʜᴏɴ 𝟹</a> 🐍\n"
+        "├⍟ Dᴀᴛᴀʙᴀsᴇ : <a href='https://www.mongodb.com/'>MᴏɴɢᴏDB</a> 🍃\n"
+        "├⍟ Fᴇᴀᴛᴜʀᴇ : Hᴀʀᴅ Sᴜʙᴛɪᴛʟᴇ Mᴇʀɢᴇ 🔤\n"
+        "├⍟ Mᴀx Sɪᴢᴇ : 4GB (Pʀᴇᴍɪᴜᴍ) 💎\n"
+        "╰───────────────⍟</b>"
+    )
+
+def get_back_button() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🔙 Back", callback_data="cb_home")]])
+
+async def edit_panel(message: Message, text: str, buttons: InlineKeyboardMarkup):
+    """Edit the existing message in place (photo caption or plain text) instead of sending a new one."""
+    try:
+        if message.photo:
+            await message.edit_caption(caption=text, reply_markup=buttons)
+        else:
+            await message.edit_text(text, reply_markup=buttons, disable_web_page_preview=True)
+    except MessageNotModified:
+        pass
+    except Exception:
+        # Fallback: if edit fails for any reason, send a fresh message
+        try:
+            await message.reply_text(text, reply_markup=buttons, disable_web_page_preview=True)
+        except Exception:
+            pass
+
 # --- Start Handler ---
 @Client.on_message(filters.private & filters.command("start"))
 async def start_handler(client: Client, message: Message):
@@ -58,26 +127,8 @@ async def start_handler(client: Client, message: Message):
         pass
 
     # 2. Welcome UI Message
-    welcome_text = (
-        f"<b>ʜᴇʏ, {user.first_name}! 👋</b>\n\n"
-        f"ɪ'ᴍ ᴀɴ <b>ʜᴀʀᴅsᴜʙ ᴍᴇʀɢᴇ ʙᴏᴛ</b> 🎬\n"
-        f"ɪ ᴄᴀɴ ᴍᴇʀɢᴇ ʜᴀʀᴅ sᴜʙᴛɪᴛʟᴇs ɪɴᴛᴏ ᴠɪᴅᴇᴏs ᴏғ ᴀɴʏ ʟᴀɴɢᴜᴀɢᴇ 🌍\n\n"
-        f"📤 Sᴇɴᴅ ᴍᴇ ᴀ ᴠɪᴅᴇᴏ + sᴜʙᴛɪᴛʟᴇ ғɪʟᴇ\n"
-        f"⚡ I'ʟʟ ᴍᴇʀɢᴇ ᴛʜᴇᴍ ᴘᴇʀғᴇᴄᴛʟʏ!\n"
-        f"🚀 Uᴘ ᴛᴏ 4GB ғᴏʀ ᴘʀᴇᴍɪᴜᴍ ᴜsᴇʀs\n\n"
-        f"👨‍💻 Dᴇᴠᴇʟᴏᴘᴇʀ: @Venuboyy"
-    )
-
-    buttons = InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🏠 Home", callback_data="cb_home"),
-            InlineKeyboardButton("❓ Help", callback_data="cb_help"),
-        ],
-        [
-            InlineKeyboardButton("ℹ️ About", callback_data="cb_about"),
-            InlineKeyboardButton("💎 Premium", callback_data="cb_premium"),
-        ]
-    ])
+    welcome_text = get_welcome_text(user.first_name)
+    buttons = get_welcome_buttons()
 
     welcome_img = "https://i.ibb.co/nMRFW6Kx/AQAD2w5r-G3a2b-VF8.jpg"
     try:
@@ -99,34 +150,12 @@ async def check_sub_cb(client: Client, query: CallbackQuery):
 # --- Help Command ---
 @Client.on_message(filters.private & filters.command("help"))
 async def help_command(client: Client, message: Message):
-    help_txt = (
-        "<b>✨ Hᴏᴡ Tᴏ Usᴇ HᴀʀᴅSᴜʙ Mᴇʀɢᴇ Bᴏᴛ ✨</b>\n\n"
-        "1️⃣ <b>Sᴇɴᴅ Vɪᴅᴇᴏ:</b> Send the video file you want to merge 🎬\n"
-        "2️⃣ <b>Sᴇɴᴅ Sᴜʙᴛɪᴛʟᴇ:</b> Send the subtitle file (.srt, .ass, etc.) 📝\n"
-        "3️⃣ <b>Mᴇʀɢᴇ:</b> Bot will automatically detect & merge them ⚡\n"
-        "4️⃣ <b>Dᴏᴡɴʟᴏᴀᴅ:</b> Get your hardsubbed video! 📥\n\n"
-        "📌 <b>Features:</b>\n"
-        "➤ Supports all languages 🌐\n"
-        "➤ Free: Up to 2GB | Premium: Up to 4GB 💎\n"
-        "➤ Ultra-fast high-speed processing ⚡"
-    )
-    await message.reply_text(help_txt)
+    await message.reply_text(get_help_text())
 
 # --- About Command ---
 @Client.on_message(filters.private & filters.command("about"))
 async def about_command(client: Client, message: Message):
-    about_txt = (
-        "<b>╭────[ Mʏ Dᴇᴛᴀɪʟs ]────⍟\n"
-        "├⍟ Nᴀᴍᴇ : HᴀʀᴅSᴜʙ Mᴇʀɢᴇ Bᴏᴛ\n"
-        "├⍟ Dᴇᴠᴇʟᴏᴘᴇʀ : <a href='https://t.me/Venuboyy'>Vᴇɴᴜʙᴏʏʏ</a> 👨‍💻\n"
-        "├⍟ Lɪʙʀᴀʀʏ : <a href='https://github.com/pyrogram/pyrogram'>Pʏʀᴏɢʀᴀᴍ</a> 📚\n"
-        "├⍟ Lᴀɴɢᴜᴀɢᴇ : <a href='https://www.python.org/'>Pʏᴛʜᴏɴ 𝟹</a> 🐍\n"
-        "├⍟ Dᴀᴛᴀʙᴀsᴇ : <a href='https://www.mongodb.com/'>MᴏɴɢᴏDB</a> 🍃\n"
-        "├⍟ Fᴇᴀᴛᴜʀᴇ : Hᴀʀᴅ Sᴜʙᴛɪᴛʟᴇ Mᴇʀɢᴇ 🔤\n"
-        "├⍟ Mᴀx Sɪᴢᴇ : 4GB (Pʀᴇᴍɪᴜᴍ) 💎\n"
-        "╰───────────────⍟</b>"
-    )
-    await message.reply_text(about_txt, disable_web_page_preview=True)
+    await message.reply_text(get_about_text(), disable_web_page_preview=True)
 
 # --- Info Command ---
 @Client.on_message(filters.private & filters.command("info"))
@@ -159,9 +188,17 @@ async def navigation_callbacks(client: Client, query: CallbackQuery):
     data = query.data.replace("cb_", "")
     if data == "home":
         await query.answer("Home Menu")
+        await edit_panel(query.message, get_welcome_text(query.from_user.first_name), get_welcome_buttons())
     elif data == "help":
-        await help_command(client, query.message)
+        await query.answer()
+        await edit_panel(query.message, get_help_text(), get_back_button())
     elif data == "about":
-        await about_command(client, query.message)
+        await query.answer()
+        await edit_panel(query.message, get_about_text(), get_back_button())
     elif data == "premium":
-        await query.message.reply_text("💎 Use /myplan or contact @Venuboyy to purchase Premium.")
+        await query.answer("💎 Premium Info")
+        await edit_panel(
+            query.message,
+            "💎 Use /myplan or contact @Venuboyy to purchase Premium.",
+            get_back_button()
+        )
