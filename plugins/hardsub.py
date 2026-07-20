@@ -75,23 +75,39 @@ async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_m
         await status_msg.edit_text("📥 <b>Downloading Subtitle File...</b>")
         await bot_client.download_media(sub_msg, file_name=sub_path)
 
-        # 2. Download Video using the bot client safely
-        # Note: Bot client downloads up to 2GB files fine. Use user_app if present and available.
-        target_client = bot_client
-        if hasattr(bot_client, "user_app") and bot_client.user_app:
-            target_client = bot_client.user_app
-
-        expected_size = vid_msg.video.file_size if vid_msg.video else vid_msg.document.file_size
+        # 2. Determine File Size & Expected Length
+        file_obj = vid_msg.video or vid_msg.document
+        expected_size = file_obj.file_size if file_obj else 0
 
         start_dl = time.time()
         await status_msg.edit_text("📥 <b>Downloading Video File...</b>")
-        
-        dl_file = await target_client.download_media(
+
+        # Smart Client Selection:
+        # Standard bot client downloads files < 2GB with 100% reliability.
+        # User app session is used for uploads or > 2GB files.
+        dl_client = bot_client
+        if expected_size > (2 * 1024 * 1024 * 1024) and hasattr(bot_client, "user_app") and bot_client.user_app:
+            dl_client = bot_client.user_app
+
+        dl_file = await dl_client.download_media(
             vid_msg,
             file_name=video_path,
             progress=progress_bar,
             progress_args=("📥 Downloading Video", status_msg, start_dl)
         )
+
+        # Fallback check: If download failed or returned 0 bytes, try with bot_client directly
+        if (not dl_file or not os.path.exists(video_path) or os.path.getsize(video_path) == 0) and dl_client != bot_client:
+            await status_msg.edit_text("🔄 <b>Retrying download with Primary Bot Client...</b>")
+            if os.path.exists(video_path):
+                os.remove(video_path)
+            
+            dl_file = await bot_client.download_media(
+                vid_msg,
+                file_name=video_path,
+                progress=progress_bar,
+                progress_args=("📥 Retrying Download", status_msg, start_dl)
+            )
 
         # Validate download completion
         if not dl_file or not os.path.exists(video_path):
@@ -136,7 +152,12 @@ async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_m
         await status_msg.edit_text("📤 <b>Uploading HardSubbed Video...</b>")
         start_ul = time.time()
 
-        await target_client.send_video(
+        # Select upload client (Use user_app for > 2GB uploads if present)
+        ul_client = bot_client
+        if expected_size > (2 * 1024 * 1024 * 1024) and hasattr(bot_client, "user_app") and bot_client.user_app:
+            ul_client = bot_client.user_app
+
+        await ul_client.send_video(
             chat_id=trigger_msg.chat.id,
             video=output_path,
             caption="🎬 <b>HardSub process completed successfully!</b>\n\n👨‍💻 Developer: @Venuboyy",
