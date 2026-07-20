@@ -10,29 +10,86 @@ from progress import progress_bar
 # Store pending files and choices per user
 USER_STATE = {}
 
-SUB_EXTENSIONS = ('.srt', '.ass', '.ssa', '.sub', '.txt')
-VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v')
+# Extensions used only as a first-pass hint — mime_type is the real source of truth
+SUB_EXTENSIONS = ('.srt', '.ass', '.ssa', '.sub', '.vtt', '.txt')
+VIDEO_EXTENSIONS = (
+    '.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v',
+    '.ts', '.m2ts', '.flv', '.wmv', '.3gp', '.mpg', '.mpeg', '.ogv'
+)
+SUB_MIME_TYPES = (
+    'application/x-subrip', 'text/plain', 'application/x-ass',
+    'text/vtt', 'application/x-ssa'
+)
+
+
+def classify_file(message: Message, file_name: str, mime_type: str):
+    """
+    Returns ('video' | 'subtitle' | None) for an incoming video/document message.
+    Priority: explicit pyrogram type > mime_type > extension > fallback-to-video.
+    Since this bot only ever expects a video or a subtitle, anything that isn't
+    clearly a subtitle (by mime or extension) is treated as video. This avoids
+    false "Unsupported file format" rejections when a video is forwarded as a
+    generic document with a missing/unusual extension or mime_type (common with
+    MKV/MP4 files relayed through other bots).
+    """
+    file_name_lower = (file_name or "").lower()
+
+    # Pyrogram already tells us this is a video message
+    if message.video:
+        return 'video'
+
+    # Subtitle detection: mime_type first, then extension
+    if mime_type and any(mime_type.startswith(m) for m in SUB_MIME_TYPES):
+        return 'subtitle'
+    if file_name_lower.endswith(SUB_EXTENSIONS):
+        return 'subtitle'
+
+    # Video detection: mime_type first, then extension
+    if mime_type and mime_type.startswith('video/'):
+        return 'video'
+    if file_name_lower.endswith(VIDEO_EXTENSIONS):
+        return 'video'
+
+    # Reject obviously non-video/subtitle documents (images, audio, archives, etc.)
+    if mime_type and (
+        mime_type.startswith('image/')
+        or mime_type.startswith('audio/')
+        or mime_type in ('application/zip', 'application/x-rar-compressed', 'application/pdf')
+    ):
+        return None
+
+    # Fallback: unknown extension/mime on a document -> assume it's the video
+    # (this bot's workflow only ever deals with video + subtitle pairs)
+    if message.document:
+        return 'video'
+
+    return None
+
 
 @Client.on_message(filters.private & (filters.video | filters.document))
 async def handle_incoming_media(client: Client, message: Message):
     user_id = message.from_user.id
-    
+
     file_size = 0
     file_name = ""
+    mime_type = ""
 
     if message.video:
         file_size = message.video.file_size
         file_name = message.video.file_name or f"video_{message.id}.mp4"
+        mime_type = message.video.mime_type or ""
     elif message.document:
         file_size = message.document.file_size
-        file_name = message.document.file_name or f"file_{message.id}.mkv"
+        file_name = message.document.file_name or f"file_{message.id}"
+        mime_type = message.document.mime_type or ""
 
-    file_name_lower = file_name.lower()
-    is_subtitle = file_name_lower.endswith(SUB_EXTENSIONS)
-    is_video = message.video or file_name_lower.endswith(VIDEO_EXTENSIONS)
+    kind = classify_file(message, file_name, mime_type)
 
-    if not is_subtitle and not is_video:
+    if kind is None:
         return await message.reply_text("❌ <b>Unsupported file format!</b> Please send a valid Video or Subtitle file.")
+
+    is_subtitle = kind == 'subtitle'
+    is_video = kind == 'video'
 
     # Initialize user state if missing
     if user_id not in USER_STATE:
@@ -89,7 +146,7 @@ async def handle_codec_choice(client: Client, callback_query: CallbackQuery):
 
     vid_msg = USER_STATE[user_id]["video"]
     sub_msg = USER_STATE[user_id]["subtitle"]
-    
+
     # Clear memory state immediately
     USER_STATE.pop(user_id, None)
 
@@ -99,13 +156,13 @@ async def handle_codec_choice(client: Client, callback_query: CallbackQuery):
 
 async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_msg: Message, sub_msg: Message, codec: str):
     status_msg = await trigger_msg.reply_text(f"⏳ <b>Initializing HardSub process ({codec.upper()})...</b>")
-    
+
     os.makedirs("downloads", exist_ok=True)
     os.makedirs("outputs", exist_ok=True)
 
     uid = trigger_msg.chat.id
     ts = int(time.time())
-    
+
     video_path = os.path.abspath(f"downloads/vid_{uid}_{ts}.mp4")
     sub_path = os.path.abspath(f"downloads/sub_{uid}_{ts}.srt")
     output_path = os.path.abspath(f"outputs/hardsub_{uid}_{ts}.mp4")
@@ -138,7 +195,7 @@ async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_m
             await status_msg.edit_text("🔄 <b>Retrying download with Primary Bot Client...</b>")
             if os.path.exists(video_path):
                 os.remove(video_path)
-            
+
             dl_file = await bot_client.download_media(
                 vid_msg,
                 file_name=video_path,
@@ -159,9 +216,9 @@ async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_m
 
         # 3. FFmpeg HardSub Processing
         await status_msg.edit_text(f"⚡ <b>Burning subtitles with lib{codec}...</b>\n<i>Please wait...</i>")
-        
+
         clean_sub_path = sub_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
-        
+
         if codec == "x265":
             ffmpeg_cmd = [
                 "ffmpeg", "-y",
@@ -191,7 +248,7 @@ async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_m
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
-        
+
         _, stderr = await process.communicate()
 
         if process.returncode != 0:
@@ -202,7 +259,7 @@ async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_m
         # 4. Upload Output Video
         await status_msg.edit_text("📤 <b>Uploading HardSubbed Video...</b>")
         start_ul = time.time()
-        
+
         output_file_size = os.path.getsize(output_path)
 
         ul_client = bot_client
