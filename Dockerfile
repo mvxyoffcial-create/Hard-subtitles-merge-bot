@@ -1,19 +1,22 @@
 FROM python:3.10-slim
 
-# Install system dependencies, FFmpeg, and encoders for both x264 and x265
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Install system dependencies: FFmpeg (with built-in x264/x265 support),
+# libass for subtitle burning, fonts, and build tools for C-extension pip packages
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
-    libx264-dev \
-    libx265-dev \
-    libass-dev \
+    libass9 \
     fontconfig \
     fonts-freefont-ttf \
     git \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install Python packages
+# Install Python packages (separate layer for caching)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
