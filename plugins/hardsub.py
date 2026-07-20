@@ -11,6 +11,7 @@ from progress import progress_bar
 USER_STATE = {}
 
 SUB_EXTENSIONS = ('.srt', '.ass', '.ssa', '.sub', '.txt')
+VIDEO_EXTENSIONS = ('.mp4', '.mkv', '.webm', '.avi', '.mov', '.m4v')
 
 @Client.on_message(filters.private & (filters.video | filters.document))
 async def handle_incoming_media(client: Client, message: Message):
@@ -24,12 +25,22 @@ async def handle_incoming_media(client: Client, message: Message):
         file_name = message.video.file_name or f"video_{message.id}.mp4"
     elif message.document:
         file_size = message.document.file_size
-        file_name = message.document.file_name or f"file_{message.id}"
+        file_name = message.document.file_name or f"file_{message.id}.mkv"
 
-    is_subtitle = file_name.lower().endswith(SUB_EXTENSIONS)
+    file_name_lower = file_name.lower()
+    is_subtitle = file_name_lower.endswith(SUB_EXTENSIONS)
+    is_video = message.video or file_name_lower.endswith(VIDEO_EXTENSIONS)
 
-    # 1. Plan Limit Check (Only enforce heavy size limits on actual video files)
-    if not is_subtitle:
+    if not is_subtitle and not is_video:
+        return await message.reply_text("❌ <b>Unsupported file format!</b> Please send a valid Video or Subtitle file.")
+
+    # Initialize user state if missing
+    if user_id not in USER_STATE:
+        USER_STATE[user_id] = {"video": None, "subtitle": None}
+
+    # STEP 1: Process Video First
+    if is_video:
+        # Check plan limit for video files
         is_prem = await is_premium_user(user_id)
         max_limit = Config.PREMIUM_LIMIT if is_prem else Config.FREE_LIMIT
 
@@ -40,21 +51,20 @@ async def handle_incoming_media(client: Client, message: Message):
                 f"Your current plan allows up to <b>{limit_str}</b>."
             )
 
-    # Initialize user state if missing
-    if user_id not in USER_STATE:
-        USER_STATE[user_id] = {"video": None, "subtitle": None}
-
-    # Store incoming message in session
-    if is_subtitle:
-        USER_STATE[user_id]["subtitle"] = message
-        if not USER_STATE[user_id]["video"]:
-            await message.reply_text("✅ <b>Subtitle received!</b> Now send the video file.")
-    else:
+        # Store video message
         USER_STATE[user_id]["video"] = message
-        if not USER_STATE[user_id]["subtitle"]:
-            await message.reply_text("✅ <b>Video received!</b> Now send the subtitle file.")
+        await message.reply_text("✅ <b>Video received!</b> Now send the subtitle file.")
+        return
 
-    # 2. When both files are present, offer encoding choices
+    # STEP 2: Process Subtitle Second
+    if is_subtitle:
+        # Require video to be sent first
+        if not USER_STATE[user_id].get("video"):
+            return await message.reply_text("⚠️ <b>Please send the Video file first!</b>")
+
+        USER_STATE[user_id]["subtitle"] = message
+
+    # STEP 3: Prompt for Codec when both are present
     if USER_STATE[user_id]["video"] and USER_STATE[user_id]["subtitle"]:
         keyboard = InlineKeyboardMarkup([
             [
@@ -80,7 +90,7 @@ async def handle_codec_choice(client: Client, callback_query: CallbackQuery):
     vid_msg = USER_STATE[user_id]["video"]
     sub_msg = USER_STATE[user_id]["subtitle"]
     
-    # Clear memory state immediately to prevent duplicate runs
+    # Clear memory state immediately
     USER_STATE.pop(user_id, None)
 
     await callback_query.message.delete()
@@ -112,7 +122,6 @@ async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_m
         start_dl = time.time()
         await status_msg.edit_text("📥 <b>Downloading Video File...</b>")
 
-        # Handle > 2GB downloads using User Session if available
         dl_client = bot_client
         if expected_size > (2 * 1024 * 1024 * 1024) and hasattr(bot_client, "user_app") and bot_client.user_app:
             dl_client = bot_client.user_app
@@ -151,7 +160,6 @@ async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_m
         # 3. FFmpeg HardSub Processing
         await status_msg.edit_text(f"⚡ <b>Burning subtitles with lib{codec}...</b>\n<i>Please wait...</i>")
         
-        # Proper path escaping for FFmpeg subtitle filter graph
         clean_sub_path = sub_path.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
         
         if codec == "x265":
