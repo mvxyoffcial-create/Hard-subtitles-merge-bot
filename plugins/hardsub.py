@@ -89,9 +89,16 @@ async def start_hardsub_pipeline(bot_client: Client, trigger_msg: Message, vid_m
 
     uid = trigger_msg.chat.id
     ts = int(time.time())
-    
+
+    # Preserve the original subtitle extension so FFmpeg parses the format correctly
+    sub_file_obj = sub_msg.document
+    orig_sub_name = sub_file_obj.file_name if sub_file_obj and sub_file_obj.file_name else "sub.srt"
+    sub_ext = os.path.splitext(orig_sub_name)[1].lower()
+    if sub_ext not in ('.srt', '.ass', '.ssa', '.sub', '.txt'):
+        sub_ext = ".srt"
+
     video_path = f"downloads/vid_{uid}_{ts}.mp4"
-    sub_path = f"downloads/sub_{uid}_{ts}.srt"
+    sub_path = f"downloads/sub_{uid}_{ts}{sub_ext}"
     output_path = f"outputs/hardsub_{uid}_{ts}.mp4"
 
     try:
