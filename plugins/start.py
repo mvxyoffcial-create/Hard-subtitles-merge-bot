@@ -132,9 +132,18 @@ async def start_handler(client: Client, message: Message):
 
     welcome_img = "https://i.ibb.co/nMRFW6Kx/AQAD2w5r-G3a2b-VF8.jpg"
     try:
-        await message.reply_photo(photo=welcome_img, caption=welcome_text, reply_markup=buttons)
+        await message.reply_photo(
+            photo=welcome_img,
+            caption=welcome_text,
+            reply_markup=buttons,
+            quote=True
+        )
     except Exception:
-        await message.reply_text(welcome_text, reply_markup=buttons)
+        await message.reply_text(
+            welcome_text,
+            reply_markup=buttons,
+            quote=True
+        )
 
 # --- Force Sub Check Callback ---
 @Client.on_callback_query(filters.regex("^check_sub$"))
